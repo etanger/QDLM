@@ -10,43 +10,6 @@ OPT_LAYER = transformers.models.opt.modeling_opt.OPTDecoderLayer
 LLAMA_MODEL = transformers.models.llama.modeling_llama.LlamaForCausalLM
 LLAMA_LAYER = transformers.models.llama.modeling_llama.LlamaDecoderLayer
 
-
-# type LLaDAModelLM(
-#   (model): LLaDAModel(
-#     (transformer): ModuleDict(
-#       (wte): Embedding(126464, 4096)
-#       (emb_drop): Dropout(p=0.0, inplace=False)
-#       (ln_f): RMSLayerNorm()
-#       (blocks): ModuleList(
-#         (0-31): 32 x LLaDALlamaBlock(
-#           (dropout): Dropout(p=0.0, inplace=False)
-#           (act): SiLU()
-#           (attn_out): Linear(in_features=4096, out_features=4096, bias=False)
-#           (ff_out): Linear(in_features=12288, out_features=4096, bias=False)
-#           (rotary_emb): RotaryEmbedding()
-#           (attn_norm): RMSLayerNorm()
-#           (ff_norm): RMSLayerNorm()
-#           (q_proj): Linear(in_features=4096, out_features=4096, bias=False)
-#           (k_proj): Linear(in_features=4096, out_features=4096, bias=False)
-#           (v_proj): Linear(in_features=4096, out_features=4096, bias=False)
-#           (ff_proj): Linear(in_features=4096, out_features=12288, bias=False)
-#           (up_proj): Linear(in_features=4096, out_features=12288, bias=False)
-#         )
-#       )
-#       (ff_out): Linear(in_features=4096, out_features=126464, bias=False)
-#     )
-#   )
-# )
-
-# mapping of the modules in LLaDA model to the original LLaMA model:
-# q_proj->q_proj
-# k_proj->k_proj
-# v_proj->v_proj
-# attn_out->o_proj
-# up_proj->up_proj
-# ff_proj->gate_proj
-# ff_out->down_proj
-
 def model_type_extractor(model):
     if isinstance(model, LLAMA_MODEL):
         return LLAMA_MODEL
@@ -61,14 +24,14 @@ def model_type_extractor(model):
         raise ValueError(f'Unknown model type {model}')
 
 def skip(*args, **kwargs):
-    # This is a helper function to save time during the initialization! 
+    # This is a helper function to save time during the initialization!
     pass
 
 def get_rope_function_name(model):
     if isinstance(model, LLAMA_MODEL) or 'dream' in model.__class__.__name__.lower():
         return "apply_rotary_pos_emb"
-    # elif 'llada' in model.__class__.__name__.lower():
-    #     return "apply_rotary_pos_emb"
+    elif 'llada' in model.__class__.__name__.lower():
+        return "apply_rotary_pos_emb"
     raise NotImplementedError
 
 
@@ -165,7 +128,7 @@ def get_model(
         model = get_dream(model_name)
         money_patch(model)
         return model
-                
+
     else:
         raise ValueError(f'Unknown model {model_name}')
 
@@ -240,7 +203,7 @@ def get_mlp_bottleneck_size(model):
         return model.config.mlp_hidden_size
     else:
         raise ValueError(f'Unknown model type {model_type}')
-    
+
 def get_hidden_size(model):
     model_type = get_model_type(model)
     if model_type == LLAMA_MODEL or 'dream' in model.__class__.__name__.lower():
@@ -251,7 +214,7 @@ def get_hidden_size(model):
         return model.config.d_model
     else:
         raise ValueError(f'Unknown model type {model_type}')
-    
+
 def get_num_attention_heads(model):
     model_type = get_model_type(model)
     if model_type == LLAMA_MODEL or 'dream' in model.__class__.__name__.lower():
@@ -371,7 +334,7 @@ def capture_layer_io(model_type, layer, layer_input):
             module = getattr(layer.self_attn, name, None) or getattr(layer, name, None)
             handles.append(module.register_forward_hook(hook_factory(name, captured_outputs, False)))
     elif 'llada' in model_type.__name__.lower():
-        
+
         captured_inputs = {
             'k_proj': [],  # q_proj, v_proj has the same input as k_proj
             'attn_out': [],

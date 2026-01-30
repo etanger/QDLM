@@ -30,18 +30,18 @@ def main():
         import wandb
         wandb.init(project=args.wandb_project, entity=args.wandb_id)
         wandb.config.update(args)
-        
+
     transformers.set_seed(args.seed)
     model = model_utils.get_model(args.model, args.hf_token)
     model.eval()
-    
-    
+
+
     # Rotate the weights
     if args.rotate:
         rotation_utils.fuse_layer_norms(model)
         rotation_utils.rotate_model(model, args)
         utils.cleanup_memory(verbos=True)
-            
+
         quant_utils.add_actquant(model) #Add Activation Wrapper to the model
         qlayers = quant_utils.find_qlayers(model)
 
@@ -64,7 +64,7 @@ def main():
                 qlayers[name].fp32_had = args.fp32_had
     else:
         quant_utils.add_actquant(model) #Add Activation Wrapper to the model as the rest of the code assumes it is present
-        
+
     if args.w_bits < 16:
         save_dict = {}
         if args.load_qmodel_path: # Load Quantized Rotated Model
@@ -73,10 +73,10 @@ def main():
             print("Load quantized model from ", args.load_qmodel_path)
             save_dict = torch.load(args.load_qmodel_path, weights_only=False)
             model.load_state_dict(save_dict["model"])
-            
+
         elif not args.w_rtn: # GPTQ Weight Quantization
             # assert "llama" in args.model, "Only llama is supported for GPTQ!"
-            
+
             trainloader = data_utils.get_loaders(
                 args.cal_dataset, nsamples=args.nsamples,
                 seed=args.seed, model=args.model,
@@ -87,7 +87,7 @@ def main():
         else: # RTN Weight Quantization
             quantizers = gptq_utils.rtn_fwrd(model, utils.DEV, args)
             save_dict["w_quantizers"] = quantizers
-            
+
         if args.save_qmodel_path:
             save_dict["model"] = model.state_dict()
             torch.save(save_dict, args.save_qmodel_path)
@@ -99,28 +99,28 @@ def main():
         down_proj_groupsize = -1
         if args.a_groupsize > 0 and "llama" in args.model:
             down_proj_groupsize = utils.llama_down_proj_groupsize(model, args.a_groupsize)
-        
-        for name in qlayers:            
+
+        for name in qlayers:
             layer_input_bits = args.a_bits
             layer_groupsize = args.a_groupsize
             layer_a_sym = not(args.a_asym)
             layer_a_clip = args.a_clip_ratio
-            
+
             if 'v_proj' in name and args.v_bits < 16: #Set the v_proj precision
                 qlayers[name].out_quantizer.configure(bits=args.v_bits,
                                               groupsize=args.v_groupsize,
                                               sym=not(args.v_asym),
                                               clip_ratio=args.v_clip_ratio)
-            
-            if 'lm_head' in name or ('ff_out' in name and 'block' not in name): #Skip lm_head quantization   
+
+            if 'lm_head' in name or ('ff_out' in name and 'block' not in name): #Skip lm_head quantization
                 layer_input_bits = 16
-            
+
             if 'down_proj' in name or ('ff_out' in name and 'block' in name): #Set the down_proj precision
                 if args.int8_down_proj:
                     layer_input_bits = 8
                 layer_groupsize = down_proj_groupsize
 
-                
+
             qlayers[name].quantizer.configure(bits=layer_input_bits,
                                               groupsize=layer_groupsize,
                                               sym=layer_a_sym,
@@ -136,18 +136,18 @@ def main():
             for layer in layers:
                 if 'llada' in model.__class__.__name__.lower():
                     rotation_utils.add_qk_rotation_wrapper_after_function_call_in_submodule(
-                            layer.rotary_emb, 
+                            layer.rotary_emb,
                             'forward',
                             config=model.config,
                             **k_quant_config)
                 else:
                     rope_function_name = model_utils.get_rope_function_name(model)
                     rotation_utils.add_qk_rotation_wrapper_after_function_call_in_forward(
-                                layer.self_attn, 
-                                rope_function_name, 
+                                layer.self_attn,
+                                rope_function_name,
                                 config=model.config,
                                 **k_quant_config)
-        
+
     # Evaluating on dataset
     testloader = data_utils.get_loaders(
             args.eval_dataset,
@@ -172,13 +172,13 @@ def main():
     # from lm_eval.api.registry import ALL_TASKS
     # from lm_eval.models.huggingface import HFLM
 
-        
-    
+
+
     if args.distribute:
         utils.distribute_model(model)
     else:
         model.to(utils.DEV)
-    
+
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model, use_fast=False, use_auth_token=args.hf_token, trust_remote_code=True)
     # hflm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.lm_eval_batch_size)
 
@@ -222,7 +222,7 @@ def main():
 
     # save results
     import json
-    import os   
+    import os
     if not os.path.exists('results'):
         os.makedirs('results')
     with open(f'results/{args.model.split("/")[-1]}-{args.a_bits}a{args.v_bits}v{args.k_bits}k{args.w_bits}w.json', 'a') as f:
@@ -230,7 +230,7 @@ def main():
             json.dump(results['results'], f)
         except Exception as e:
             print(f"Error writing results to {f}: {e}")
-    
+
     exit(0)
 
     metric_vals = {task: round(result.get('acc_norm,none', result['acc,none']), 4) for task, result in results.items()}
