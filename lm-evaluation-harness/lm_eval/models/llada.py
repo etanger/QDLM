@@ -14,6 +14,9 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
 from tqdm import tqdm
+import os
+import json
+from datetime import datetime
 
 from transformers import AutoTokenizer, AutoModel
 # from generate import generate
@@ -55,7 +58,8 @@ def get_num_transfer_tokens(mask_index, steps):
 
 @ torch.no_grad()
 def generate(model, prompt, steps=128, gen_length=128, block_length=128, temperature=0.,
-             cfg_scale=0., remasking='low_confidence', mask_id=126336):
+             cfg_scale=0., remasking='low_confidence', mask_id=126336,
+             fp_model=None, q_model=None, quant_start_step: int = 0):
     '''
     Args:
         model: Mask predictor.
@@ -67,7 +71,14 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
         cfg_scale: Unsupervised classifier-free guidance scale.
         remasking: Remasking strategy. 'low_confidence' or 'random'.
         mask_id: The toke id of [MASK] is 126336.
+        fp_model: fp16 model
+        q_model: quantimize model
+        quant_start_step: when to switch the model
     '''
+
+    step_losses = []
+    step_confidences = []
+    
     x = torch.full((1, prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
     x[:, :prompt.shape[1]] = prompt.clone()
 
@@ -84,19 +95,45 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
         num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
         for i in range(steps):
             mask_index = (x == mask_id)
+
+            # ===== switch model =====
+            cur_model = model
+            if (fp_model is not None) and (q_model is not None):
+                cur_model = fp_model if i < quant_start_step else q_model
+            # ==========================
+            
             if cfg_scale > 0.:
                 un_x = x.clone()
                 un_x[prompt_index] = mask_id
                 x_ = torch.cat([x, un_x], dim=0)
-                logits = model(x_).logits
+                
+                logits = cur_model(x_).logits # use current model
+                
                 logits, un_logits = torch.chunk(logits, 2, dim=0)
                 logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
             else:
-                logits = model(x).logits
-
+                
+                logits = cur_model(x).logits # use current model
+    
             logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
             x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
 
+            
+            # === Step Loss (masked CE) ===
+            with torch.no_grad():
+                step_mask = (x == mask_id)
+                if step_mask.any():
+                    step_loss = F.cross_entropy(
+                    logits[step_mask],
+                    x0[step_mask], 
+                    reduction='mean'
+                    ).item()
+                else:
+                    step_loss = 0.0
+            step_losses.append(step_loss)
+            
+            #=========================
+            
             if remasking == 'low_confidence':
                 p = F.softmax(logits, dim=-1)
                 x0_p = torch.squeeze(
@@ -111,12 +148,33 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
             x0 = torch.where(mask_index, x0, x)
             confidence = torch.where(mask_index, x0_p, -np.inf)
 
+            # ===== store confidence=====
+            valid_conf = confidence[confidence != -np.inf]
+            avg_conf = valid_conf.mean().item() if valid_conf.numel() > 0 else 0.0
+            step_confidences.append(avg_conf)
+            #=========================
+
             transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
             for j in range(confidence.shape[0]):
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
                 transfer_index[j, select_index] = True
             x[transfer_index] = x0[transfer_index]
 
+    # ===== save per-step logs =====
+    log_dir = "step_logs"
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "denoise_step_metrics.jsonl")
+    record = {
+        "timestamp": datetime.now().isoformat(),
+        "steps": len(step_losses),
+        "quant_start_step": quant_start_step,
+        "step_losses": step_losses,
+        "step_confidences": step_confidences,
+    }          
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    # =================================
+ 
     return x
 
 
@@ -148,6 +206,11 @@ class LLaDAEvalHarness(LM):
         block_length=1024,
         remasking='low_confidence',
         device="cuda",
+        
+        model_fp=None,
+        model_q=None,
+        quant_start_step: int = 0,
+
         **kwargs,
     ):
         '''
@@ -184,17 +247,37 @@ class LLaDAEvalHarness(LM):
         else:
             self.model = model
         self.model.eval()
+        
+        self.model_fp = model_fp
+        self.model_q = model_q
+        self.quant_start_step = int(quant_start_step)
+        if self.model_fp is not None:
+            self.model_fp.eval()
+        if self.model_q is not None:
+            self.model_q.eval()
 
         self.device = torch.device(device)
         if self.accelerator is not None:
             self.model = self.accelerator.prepare(self.model)
+            if self.model_fp is not None:
+                self.model_fp = self.accelerator.prepare(self.model_fp)
+            if self.model_q is not None:
+                self.model_q = self.accelerator.prepare(self.model_q)
             self.device = torch.device(f'{self.accelerator.device}')
             self._rank = self.accelerator.local_process_index
             self._world_size = self.accelerator.num_processes
         elif model is None or isinstance(model, str): 
             self.model = self.model.to(device)
+            if self.model_fp is not None:
+                self.model_fp = self.model_fp.to(device)
+            if self.model_q is not None:
+                self.model_q = self.model_q.to(device)
         else:
             self.device = next(model.parameters()).device
+            if self.model_fp is not None:
+                self.model_fp = self.model_fp.to(self.device)
+            if self.model_q is not None:
+                self.model_q = self.model_q.to(self.device)
 
         self.mask_id = mask_id
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -210,7 +293,9 @@ class LLaDAEvalHarness(LM):
         self.steps = steps
         self.gen_length = gen_length
         self.block_length = block_length
-        self.remasking = remasking    
+        self.remasking = remasking
+
+        
     @property
     def rank(self):
         return self._rank
@@ -372,7 +457,8 @@ class LLaDAEvalHarness(LM):
  
             try:
                 generated_answer = generate(self.model, prompt, steps=self.steps, gen_length=self.gen_length, block_length=self.block_length, 
-                                            temperature=0, cfg_scale=self.cfg, remasking=self.remasking, mask_id=self.mask_id)
+                                            temperature=0, cfg_scale=self.cfg, remasking=self.remasking, mask_id=self.mask_id,
+                                            fp_model=self.model_fp,q_model=self.model_q,quant_start_step=self.quant_start_step)
                 
             except torch.cuda.OutOfMemoryError as e:
                 print(f"Out of memory error while generating. Please try reducing the batch size or using a smaller model. Batch size: {self.batch_size}")
