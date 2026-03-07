@@ -144,7 +144,7 @@ model = AutoGPTQForCausalLM.from_pretrained(pretrained_model_dir, quantize_confi
 
 traindataset, testenc = get_wikitext2(128, 0, 2048, pretrained_model_dir)
 model.quantize(traindataset)
-model = model.to("cuda")
+model = model.to("cuda:1")
 model.eval()
 from transformers import AutoModel
 
@@ -153,7 +153,7 @@ model_fp16 = AutoModel.from_pretrained(
     pretrained_model_dir,
     trust_remote_code=True,
     torch_dtype=torch.bfloat16  # or torch.float16
-).to("cuda")
+).to("cuda:0")
 model_fp16.eval()
 
 from lm_eval.api.registry import get_model

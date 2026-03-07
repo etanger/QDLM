@@ -1,6 +1,7 @@
 '''
 This file is inspired by the code from https://github.com/ML-GSAI/SMDM
 '''
+import time
 import accelerate
 import torch
 import re
@@ -94,31 +95,50 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
         block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
         num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
         for i in range(steps):
+            start_time = time.time()  # 记录开始时间
+            # ===== 内存监控 =====
+            if i % 10 == 0:  # 每 10 步打印一次
+                if torch.cuda.is_available():
+                    gpu0_alloc = torch.cuda.memory_allocated(0) / 1024**3
+                    gpu0_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                    if torch.cuda.device_count() > 1:
+                        gpu1_alloc = torch.cuda.memory_allocated(1) / 1024**3
+                        gpu1_total = torch.cuda.get_device_properties(1).total_memory / 1024**3
+                        print(f"[Step {i:3d}/{steps}] GPU0: {gpu0_alloc:5.2f}/{gpu0_total:.2f} GB | GPU1: {gpu1_alloc:5.2f}/{gpu1_total:.2f} GB")
+                    else:
+                        print(f"[Step {i:3d}/{steps}] GPU0: {gpu0_alloc:5.2f}/{gpu0_total:.2f} GB")
+            # ====================
+
             mask_index = (x == mask_id)
 
             # ===== switch model =====
             cur_model = model
             if (fp_model is not None) and (q_model is not None):
-                cur_model = fp_model if i < quant_start_step else q_model
+                cur_model = q_model if i < quant_start_step else fp_model
             # ==========================
-            
+            # ===== 跨 GPU 数据传输 =====
+            base_device = model.device
+            x_input = x.to(cur_model.device)
+            # =============================
+
             if cfg_scale > 0.:
-                un_x = x.clone()
+                un_x = x_input.clone()
                 un_x[prompt_index] = mask_id
-                x_ = torch.cat([x, un_x], dim=0)
-                
+                x_ = torch.cat([x_input, un_x], dim=0)
+
                 logits = cur_model(x_).logits # use current model
-                
+
                 logits, un_logits = torch.chunk(logits, 2, dim=0)
                 logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
             else:
-                
-                logits = cur_model(x).logits # use current model
-    
+
+                logits = cur_model(x_input).logits # use current model
+            # 结果移回原设备
+            logits = logits.to(base_device)
             logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
             x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
 
-            
+
             # === Step Loss (masked CE) ===
             with torch.no_grad():
                 step_mask = (x == mask_id)
@@ -159,6 +179,15 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
                 transfer_index[j, select_index] = True
             x[transfer_index] = x0[transfer_index]
+
+            step_time = time.time() - start_time
+
+            gpu0_alloc = torch.cuda.memory_allocated(0) / 1024**3
+            gpu1_alloc = torch.cuda.memory_allocated(1) / 1024**3
+
+            # 修改打印，添加时间
+            if i % 10 == 0:
+                print(f"[Step {i:3d}/{steps}] GPU0: {gpu0_alloc:5.2f}/{gpu0_total:5.2f} GB | GPU1: {gpu1_alloc:5.2f}/{gpu1_total:5.2f} GB | Time: {step_time:.2f}s | Model: {model_name if (fp_model is not None and q_model is not None) else 'Single'}")
 
     # ===== save per-step logs =====
     log_dir = "step_logs"
@@ -266,18 +295,20 @@ class LLaDAEvalHarness(LM):
             self.device = torch.device(f'{self.accelerator.device}')
             self._rank = self.accelerator.local_process_index
             self._world_size = self.accelerator.num_processes
-        elif model is None or isinstance(model, str): 
+        elif model is None or isinstance(model, str):
+
+            # 不要移动 model_fp 和 model_q，保持它们在原来的 GPU 上
             self.model = self.model.to(device)
-            if self.model_fp is not None:
-                self.model_fp = self.model_fp.to(device)
-            if self.model_q is not None:
-                self.model_q = self.model_q.to(device)
+            #if self.model_fp is not None:
+            #    self.model_fp = self.model_fp.to(device)
+            #if self.model_q is not None:
+            #    self.model_q = self.model_q.to(device)
         else:
             self.device = next(model.parameters()).device
-            if self.model_fp is not None:
-                self.model_fp = self.model_fp.to(self.device)
-            if self.model_q is not None:
-                self.model_q = self.model_q.to(self.device)
+            #if self.model_fp is not None:
+            #    self.model_fp = self.model_fp.to(self.device)
+            #if self.model_q is not None:
+            #    self.model_q = self.model_q.to(self.device)
 
         self.mask_id = mask_id
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
