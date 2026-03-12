@@ -114,7 +114,8 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
             # ===== switch model =====
             cur_model = model
             if (fp_model is not None) and (q_model is not None):
-                cur_model = q_model if i < quant_start_step else fp_model
+                cur_model = q_model if i >= quant_start_step else fp_model
+                model_name = "quant" if i >= quant_start_step else "fp16"
             # ==========================
             # ===== 跨 GPU 数据传输 =====
             base_device = model.device

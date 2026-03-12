@@ -160,10 +160,35 @@ from lm_eval.api.registry import get_model
 class_name = model.__class__.__name__.lower()
 if 'llada' in class_name:
     model_cls = get_model('llada_dist')
-    model_args = dict(
-        steps=args.steps, gen_length=args.gen_length, block_length=args.block_length, temperature=0., cfg_scale=0., remasking='low_confidence', mc_num=args.mc_num, batch_size=args.batch_size,model_fp=model_fp16,model_q=model,quant_start_step=args.quant_start_step
+    model_init_args = dict(
+        steps=args.steps,
+        gen_length=args.gen_length,
+        block_length=args.block_length,
+        temperature=0.,
+        cfg_scale=0.,
+        remasking='low_confidence',
+        mc_num=args.mc_num,
+        batch_size=args.batch_size,
+        model_fp=model_fp16,
+        model_q=model,
+        quant_start_step=args.quant_start_step,
     )
-    model = model_cls(model=model, model_path=pretrained_model_dir, **model_args)
+    model = model_cls(
+        model=model,
+        model_path=pretrained_model_dir,
+        **model_init_args,
+    )
+    eval_args = dict(
+        steps=args.steps,
+        gen_length=args.gen_length,
+        block_length=args.block_length,
+        temperature=0.,
+        cfg_scale=0.,
+        remasking='low_confidence',
+        mc_num=args.mc_num,
+        batch_size=args.batch_size,
+        quant_start_step=args.quant_start_step,
+    )
 elif 'dream' in class_name and 'dream' in pretrained_model_dir.lower():
     model_cls = get_model('dream_base')
     model_args = dict(
@@ -183,7 +208,7 @@ with torch.cuda.amp.autocast():
         tasks=args.tasks.split(','),
         num_fewshot=args.num_fewshot,
         limit=None if args.limit == -1 else args.limit,
-        model_args=model_args,
+        model_args=eval_args,
         confirm_run_unsafe_code=True
     )
 results.update(t_results)
