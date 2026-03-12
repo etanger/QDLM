@@ -1,0 +1,117 @@
+nohup: ignoring input
+==========================================
+Using GPUs: 2,3
+REVERSE: Quant→FP16 (步骤 0-63 量化，64-256 FP16)
+Model: /workspace/hdd/datasets/zwang97/models/LLaDA-8B-Instruct
+W_BIT: 3
+QUANT_START_STEP: 64
+==========================================
+/home/zwang97/miniconda3/envs/qdlm/lib/python3.10/site-packages/transformers/utils/generic.py:441: FutureWarning: `torch.utils._pytree._register_pytree_node` is deprecated. Please use `torch.utils._pytree.register_pytree_node` instead.
+  _torch_pytree._register_pytree_node(
+/home/zwang97/miniconda3/envs/qdlm/lib/python3.10/site-packages/transformers/utils/generic.py:309: FutureWarning: `torch.utils._pytree._register_pytree_node` is deprecated. Please use `torch.utils._pytree.register_pytree_node` instead.
+  _torch_pytree._register_pytree_node(
+WARNING - AutoGPTQ has stopped development. Please transition to GPTQModel: https://github.com/ModelCoud/GPTQModel
+GPTQModel has been merged into Transformers/Optimum and full deprecation of AutoGPTQ within HF frameworks is planned in the near-future.
+/workspace/nvme/zwang97/QDLM/AutoGPTQ/auto_gptq/nn_modules/triton_utils/kernels.py:411: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  def forward(ctx, input, qweight, scales, qzeros, g_idx, bits, maxq):
+/workspace/nvme/zwang97/QDLM/AutoGPTQ/auto_gptq/nn_modules/triton_utils/kernels.py:419: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, grad_output):
+/workspace/nvme/zwang97/QDLM/AutoGPTQ/auto_gptq/nn_modules/triton_utils/kernels.py:461: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @custom_fwd(cast_inputs=torch.float16)
+CUDA extension not installed.
+CUDA extension not installed.
+Special tokens have been added in the vocabulary, make sure the associated word embeddings are fine-tuned or trained.
+Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]Loading checkpoint shards:  17%|█▋        | 1/6 [00:00<00:01,  3.87it/s]Loading checkpoint shards:  33%|███▎      | 2/6 [00:00<00:01,  3.38it/s]Loading checkpoint shards:  50%|█████     | 3/6 [00:00<00:00,  3.23it/s]Loading checkpoint shards:  67%|██████▋   | 4/6 [00:01<00:00,  3.20it/s]Loading checkpoint shards:  83%|████████▎ | 5/6 [00:01<00:00,  3.21it/s]Loading checkpoint shards: 100%|██████████| 6/6 [00:01<00:00,  3.44it/s]Loading checkpoint shards: 100%|██████████| 6/6 [00:01<00:00,  3.36it/s]
+WARNING - can't get model's sequence length from model config, will set to 4096.
+Special tokens have been added in the vocabulary, make sure the associated word embeddings are fine-tuned or trained.
+INFO - Start quantizing layer 1/32
+INFO - Quantizing attn_out in layer 1/32...
+2026-03-12 06:49:18 INFO [auto_gptq.quantization.gptq] duration: 0.7985141277313232
+2026-03-12 06:49:18 INFO [auto_gptq.quantization.gptq] avg loss: 15.643281936645508
+INFO - Quantizing ff_out in layer 1/32...
+2026-03-12 06:49:25 INFO [auto_gptq.quantization.gptq] duration: 2.880202054977417
+2026-03-12 06:49:25 INFO [auto_gptq.quantization.gptq] avg loss: 1.3111302852630615
+INFO - Quantizing up_proj in layer 1/32...
+2026-03-12 06:49:28 INFO [auto_gptq.quantization.gptq] duration: 0.7624480724334717
+2026-03-12 06:49:28 INFO [auto_gptq.quantization.gptq] avg loss: 12.387434959411621
+INFO - Quantizing ff_proj in layer 1/32...
+2026-03-12 06:49:28 INFO [auto_gptq.quantization.gptq] duration: 0.7536056041717529
+2026-03-12 06:49:28 INFO [auto_gptq.quantization.gptq] avg loss: 12.593019485473633
+INFO - Start quantizing layer 2/32
+INFO - Quantizing attn_out in layer 2/32...
+2026-03-12 06:49:31 INFO [auto_gptq.quantization.gptq] duration: 0.9037940502166748
+2026-03-12 06:49:31 INFO [auto_gptq.quantization.gptq] avg loss: 0.5005171895027161
+INFO - Quantizing ff_out in layer 2/32...
+2026-03-12 06:49:38 INFO [auto_gptq.quantization.gptq] duration: 3.289872407913208
+2026-03-12 06:49:38 INFO [auto_gptq.quantization.gptq] avg loss: 1.9038132429122925
+INFO - Quantizing up_proj in layer 2/32...
+2026-03-12 06:49:41 INFO [auto_gptq.quantization.gptq] duration: 1.4111993312835693
+2026-03-12 06:49:41 INFO [auto_gptq.quantization.gptq] avg loss: 12.602897644042969
+INFO - Quantizing ff_proj in layer 2/32...
+2026-03-12 06:49:42 INFO [auto_gptq.quantization.gptq] duration: 0.7529087066650391
+2026-03-12 06:49:42 INFO [auto_gptq.quantization.gptq] avg loss: 13.114751815795898
+INFO - Start quantizing layer 3/32
+INFO - Quantizing attn_out in layer 3/32...
+2026-03-12 06:49:45 INFO [auto_gptq.quantization.gptq] duration: 0.9049382209777832
+2026-03-12 06:49:45 INFO [auto_gptq.quantization.gptq] avg loss: 0.6449059247970581
+INFO - Quantizing ff_out in layer 3/32...
+2026-03-12 06:49:52 INFO [auto_gptq.quantization.gptq] duration: 3.096740245819092
+2026-03-12 06:49:52 INFO [auto_gptq.quantization.gptq] avg loss: 5.980287551879883
+INFO - Quantizing up_proj in layer 3/32...
+2026-03-12 06:49:54 INFO [auto_gptq.quantization.gptq] duration: 0.9486784934997559
+2026-03-12 06:49:54 INFO [auto_gptq.quantization.gptq] avg loss: 27.209054946899414
+INFO - Quantizing ff_proj in layer 3/32...
+2026-03-12 06:49:55 INFO [auto_gptq.quantization.gptq] duration: 0.7538104057312012
+2026-03-12 06:49:55 INFO [auto_gptq.quantization.gptq] avg loss: 28.420536041259766
+INFO - Start quantizing layer 4/32
+INFO - Quantizing attn_out in layer 4/32...
+2026-03-12 06:49:58 INFO [auto_gptq.quantization.gptq] duration: 1.3376290798187256
+2026-03-12 06:49:58 INFO [auto_gptq.quantization.gptq] avg loss: 1.1933279037475586
+INFO - Quantizing ff_out in layer 4/32...
+2026-03-12 06:50:05 INFO [auto_gptq.quantization.gptq] duration: 3.415693521499634
+2026-03-12 06:50:05 INFO [auto_gptq.quantization.gptq] avg loss: 13.069259643554688
+INFO - Quantizing up_proj in layer 4/32...
+2026-03-12 06:50:08 INFO [auto_gptq.quantization.gptq] duration: 1.2993276119232178
+2026-03-12 06:50:08 INFO [auto_gptq.quantization.gptq] avg loss: 62.08011245727539
+INFO - Quantizing ff_proj in layer 4/32...
+2026-03-12 06:50:10 INFO [auto_gptq.quantization.gptq] duration: 1.849886178970337
+2026-03-12 06:50:10 INFO [auto_gptq.quantization.gptq] avg loss: 65.3226547241211
+INFO - Start quantizing layer 5/32
+INFO - Quantizing attn_out in layer 5/32...
+2026-03-12 06:50:12 INFO [auto_gptq.quantization.gptq] duration: 0.9036612510681152
+2026-03-12 06:50:12 INFO [auto_gptq.quantization.gptq] avg loss: 4.299442768096924
+INFO - Quantizing ff_out in layer 5/32...
+2026-03-12 06:50:19 INFO [auto_gptq.quantization.gptq] duration: 2.9678637981414795
+2026-03-12 06:50:19 INFO [auto_gptq.quantization.gptq] avg loss: 22.966455459594727
+INFO - Quantizing up_proj in layer 5/32...
+2026-03-12 06:50:22 INFO [auto_gptq.quantization.gptq] duration: 0.9824390411376953
+2026-03-12 06:50:22 INFO [auto_gptq.quantization.gptq] avg loss: 125.14024353027344
+INFO - Quantizing ff_proj in layer 5/32...
+2026-03-12 06:50:23 INFO [auto_gptq.quantization.gptq] duration: 0.7545392513275146
+2026-03-12 06:50:23 INFO [auto_gptq.quantization.gptq] avg loss: 132.41319274902344
+INFO - Start quantizing layer 6/32
+INFO - Quantizing attn_out in layer 6/32...
+2026-03-12 06:50:26 INFO [auto_gptq.quantization.gptq] duration: 0.9074244499206543
+2026-03-12 06:50:26 INFO [auto_gptq.quantization.gptq] avg loss: 5.769859790802002
+INFO - Quantizing ff_out in layer 6/32...
+2026-03-12 06:50:33 INFO [auto_gptq.quantization.gptq] duration: 3.4184937477111816
+2026-03-12 06:50:33 INFO [auto_gptq.quantization.gptq] avg loss: 33.809959411621094
+INFO - Quantizing up_proj in layer 6/32...
+2026-03-12 06:50:35 INFO [auto_gptq.quantization.gptq] duration: 0.9529111385345459
+2026-03-12 06:50:35 INFO [auto_gptq.quantization.gptq] avg loss: 213.33074951171875
+INFO - Quantizing ff_proj in layer 6/32...
+2026-03-12 06:50:36 INFO [auto_gptq.quantization.gptq] duration: 0.7562503814697266
+2026-03-12 06:50:36 INFO [auto_gptq.quantization.gptq] avg loss: 227.73106384277344
+INFO - Start quantizing layer 7/32
+INFO - Quantizing attn_out in layer 7/32...
+2026-03-12 06:50:39 INFO [auto_gptq.quantization.gptq] duration: 0.9042191505432129
+2026-03-12 06:50:39 INFO [auto_gptq.quantization.gptq] avg loss: 6.720415115356445
+INFO - Quantizing ff_out in layer 7/32...
+2026-03-12 06:50:46 INFO [auto_gptq.quantization.gptq] duration: 3.348578929901123
+2026-03-12 06:50:46 INFO [auto_gptq.quantization.gptq] avg loss: 48.05475616455078
+INFO - Quantizing up_proj in layer 7/32...
+2026-03-12 06:50:49 INFO [auto_gptq.quantization.gptq] duration: 1.390709400177002
+2026-03-12 06:50:49 INFO [auto_gptq.quantization.gptq] avg loss: 274.85662841796875
+INFO - Quantizing ff_proj in layer 7/32...
+2026-03-12 06:50:49 INFO [auto_gptq.quantization.gptq] duration: 0.7537527084350586
+2026-03-12 06:50:49 INFO [auto_gptq.quantization.gptq] avg loss: 293.1666259765625
