@@ -286,7 +286,74 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         if not self.quantize_config.true_sequential:
             inside_layer_modules = [sum(inside_layer_modules, [])]
         quantizers = {}
+
+        # === 硬编码：定义要跳过的层 ===
+        # 实验 5: 前半 FP16，后半量化
+        # skip_layers = list(range(0, 16))  # 跳过 layer 0-15
+
+        # 实验 6: 前半量化，后半 FP16
+        # skip_layers = list(range(16, 32))  # 跳过 layer 16-31
+
+        # Exp7: 只保留前 8 层 FP16
+        # skip_layers = list(range(0, 8))  # 跳过 Layer 0-7
+
+        # Exp8: 只量化后 1/4（保留前 3/4 为 FP16）
+        # skip_layers = list(range(0, 24))  # 跳过量化 Layer 0-23，保持 FP16
+
+        # Exp9: 只量化前 1/4（保留后 3/4 为 FP16）
+        # skip_layers = list(range(8, 32))  # 跳过量化 Layer 8-31，保持 FP16
+
+        # Exp11: 只量化前 3/4（保留后 1/4 为 FP16）
+        #skip_layers = list(range(24, 32))  # 跳过量化 Layer 24-31，保持 FP16
+
+        # Exp12: 只保留中间层 FP16（量化两端）
+        # skip_layers = list(range(8, 24))  # 跳过量化 Layer 8-23，保持 FP16
+
+        # Exp13: 只量化中间层（Layer 8-23），首尾保持 FP16
+        skip_layers = list(range(0, 8)) + list(range(24, 32))  # 跳过 Layer 0-7 和 24-31
+
+        # === 硬编码结束 ===
+
         for i in range(len(layers)):
+            # 跳过指定层
+            if i in skip_layers:
+                logger.info(f"⚠️ SKIPPING layer {i + 1}/{len(layers)} - keeping FP16")
+                layer = layers[i]
+                force_layer_back_to_cpu = False
+                if get_device(layer) == CPU:
+                    move_to_device(layer, CUDA_0)
+                    force_layer_back_to_cpu = True
+                cur_layer_device = get_device(layer)
+
+                # 只计算输出，不量化
+                for j in range(num_batches):
+                    layer_input = []
+                    for k, layer_inp in enumerate(layer_inputs[j]):
+                        layer_input.append(move_to_device(layer_inp, cur_layer_device))
+
+                    layer_attention_mask = move_to_device(attention_masks[j], cur_layer_device)
+                    additional_layer_inputs = {"attention_mask": layer_attention_mask}
+                    layer_position_ids = None if not position_ids else move_to_device(position_ids[j], cur_layer_device)
+                    if layer_position_ids is not None:
+                        additional_layer_inputs["position_ids"] = layer_position_ids
+                    for k, v in layer_input_kwargs[j].items():
+                        additional_layer_inputs[k] = nested_move_to_device(v, cur_layer_device)
+                    if additional_layer_inputs['attention_mask'] is None:
+                        additional_layer_inputs.pop('attention_mask')
+                    layer_output = move_to_device(
+                        layer(*layer_input, **additional_layer_inputs)[0],
+                        cur_layer_device if cache_examples_on_gpu else CPU,
+                    )
+                    layer_outputs.append([layer_output])
+
+                layers[i] = move_to_device(layer, CPU if force_layer_back_to_cpu else cur_layer_device)
+                del layer
+                del layer_inputs
+                layer_inputs, layer_outputs = layer_outputs, []
+                torch.cuda.empty_cache()
+                continue
+
+
             logger.info(f"Start quantizing layer {i + 1}/{len(layers)}")
             layer = layers[i]
             force_layer_back_to_cpu = False
