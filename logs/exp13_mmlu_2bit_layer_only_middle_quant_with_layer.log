@@ -1,0 +1,25 @@
+nohup: ignoring input
+==========================================
+Using GPUs: 3,2
+Exp13: MMLU Layer Sensitivity - Only Quantize Middle Layers
+  Layer 0-7:  FP16 (skip quantization)
+  Layer 8-23: 2-bit Quantization
+  Layer 24-31: FP16 (skip quantization)
+Model: /workspace/hdd/datasets/zwang97/models/LLaDA-8B-Instruct
+==========================================
+/home/zwang97/miniconda3/envs/qdlm/lib/python3.10/site-packages/transformers/utils/generic.py:441: FutureWarning: `torch.utils._pytree._register_pytree_node` is deprecated. Please use `torch.utils._pytree.register_pytree_node` instead.
+  _torch_pytree._register_pytree_node(
+/home/zwang97/miniconda3/envs/qdlm/lib/python3.10/site-packages/transformers/utils/generic.py:309: FutureWarning: `torch.utils._pytree._register_pytree_node` is deprecated. Please use `torch.utils._pytree.register_pytree_node` instead.
+  _torch_pytree._register_pytree_node(
+WARNING - AutoGPTQ has stopped development. Please transition to GPTQModel: https://github.com/ModelCoud/GPTQModel
+GPTQModel has been merged into Transformers/Optimum and full deprecation of AutoGPTQ within HF frameworks is planned in the near-future.
+/workspace/nvme/zwang97/QDLM/AutoGPTQ/auto_gptq/nn_modules/triton_utils/kernels.py:411: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  def forward(ctx, input, qweight, scales, qzeros, g_idx, bits, maxq):
+/workspace/nvme/zwang97/QDLM/AutoGPTQ/auto_gptq/nn_modules/triton_utils/kernels.py:419: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, grad_output):
+/workspace/nvme/zwang97/QDLM/AutoGPTQ/auto_gptq/nn_modules/triton_utils/kernels.py:461: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @custom_fwd(cast_inputs=torch.float16)
+CUDA extension not installed.
+CUDA extension not installed.
+Special tokens have been added in the vocabulary, make sure the associated word embeddings are fine-tuned or trained.
+Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]
