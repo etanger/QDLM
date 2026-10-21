@@ -66,6 +66,71 @@ def get_module_by_name_suffix(model, module_name: str):
             return module
 
 
+
+def _infer_layer_bits_from_quantizer_entry(
+    entry,
+    default_bits,
+):
+    """
+    Recover the real per-module bit width from a GPTQ quantizer entry.
+
+    During pack_model(), entry has the form:
+
+        (quantizer, scale, zero, g_idx)
+
+    Quantizer.configure(bits) sets:
+
+        W2 -> maxq = 3
+        W3 -> maxq = 7
+
+    During ordinary checkpoint loading, names may instead map module
+    names to nn.Module objects. In that case, retain default_bits.
+    """
+    if not isinstance(entry, (tuple, list)):
+        return default_bits
+
+    if len(entry) == 0:
+        return default_bits
+
+    quantizer = entry[0]
+    maxq = getattr(
+        quantizer,
+        "maxq",
+        None,
+    )
+
+    if maxq is None:
+        return default_bits
+
+    if torch.is_tensor(maxq):
+        if maxq.numel() != 1:
+            return default_bits
+
+        maxq = int(
+            maxq.detach().cpu().item()
+        )
+    else:
+        try:
+            maxq = int(maxq)
+        except (TypeError, ValueError):
+            return default_bits
+
+    levels = maxq + 1
+
+    if levels <= 0:
+        return default_bits
+
+    # Integer GPTQ uses 2**bits quantization levels.
+    if levels & (levels - 1):
+        return default_bits
+
+    inferred_bits = levels.bit_length() - 1
+
+    if inferred_bits not in (2, 3, 4, 8):
+        return default_bits
+
+    return inferred_bits
+
 def make_quant(
     module,
     names,
@@ -106,6 +171,14 @@ def make_quant(
 
     for name, submodule in module.named_modules():
         if name in names:
+            layer_bits = bits
+
+            if isinstance(names, dict):
+                layer_bits = _infer_layer_bits_from_quantizer_entry(
+                    names[name],
+                    bits,
+                )
+
             ori_layer_device = next(submodule.parameters()).device
 
             if isinstance(submodule, nn.Linear):
@@ -125,7 +198,7 @@ def make_quant(
                 and not use_tritonv2
             ):
                 new_layer = QuantLinear(
-                    bits,
+                    layer_bits,
                     group_size,
                     in_features,
                     out_features,
@@ -136,7 +209,7 @@ def make_quant(
                 )
             else:
                 new_layer = QuantLinear(
-                    bits,
+                    layer_bits,
                     group_size,
                     in_features,
                     out_features,
@@ -145,7 +218,16 @@ def make_quant(
                     weight_dtype=submodule.weight.dtype,
                 )
             new_layer.device = ori_layer_device
-            recurse_setattr(module, name, new_layer.to(ori_layer_device))
+
+            logger.info(
+                f"[MixedBit] make_quant: {name} -> W{layer_bits}"
+            )
+
+            recurse_setattr(
+                module,
+                name,
+                new_layer.to(ori_layer_device),
+            )
 
 
 def preprocess_checkpoint_qigen(
@@ -297,6 +379,41 @@ def pack_model(
         use_marlin=use_marlin,
     )
     qlayers = find_layers(model, [QuantLinear])
+
+    missing_quantized_modules = sorted(
+        set(quantizers) - set(qlayers)
+    )
+
+    if missing_quantized_modules:
+        raise RuntimeError(
+            "Some GPTQ modules were not replaced by QuantLinear. "
+            f"First missing modules: "
+            f"{missing_quantized_modules[:10]}"
+        )
+
+    packed_bit_histogram = {}
+
+    for module_name in quantizers:
+        module_bits = int(
+            getattr(
+                qlayers[module_name],
+                "bits",
+                bits,
+            )
+        )
+
+        packed_bit_histogram[module_bits] = (
+            packed_bit_histogram.get(
+                module_bits,
+                0,
+            )
+            + 1
+        )
+
+    logger.info(
+        "[MixedBit] packed module histogram: "
+        f"{dict(sorted(packed_bit_histogram.items()))}"
+    )
 
     # TODO remove once pack() thread regression is fixed
     # Limit pack() thread usage to avoid slow-down: applies limit to all supported libs

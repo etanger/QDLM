@@ -310,12 +310,281 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         # skip_layers = list(range(8, 24))  # 跳过量化 Layer 8-23，保持 FP16
 
         # Exp13: 只量化中间层（Layer 8-23），首尾保持 FP16
-        skip_layers = list(range(0, 8)) + list(range(24, 32))  # 跳过 Layer 0-7 和 24-31
+        # skip_layers = list(range(0, 8)) + list(range(24, 32))  # 跳过 Layer 0-7 和 24-31
+
+	# Exp20: 只量化8-19
+        # skip_layers = list(range(0,8)) + list(range(20,32))
+
+        # Exp21: 只量化10-21
+        # skip_layers = list(range(0, 10)) + list(range(22, 32))
+
+        # Exp22: 只量化12-23
+        # skip_layers = list(range(0, 12)) + list(range(24, 32))
+
+        # Exp23: 只量化14-25
+        # skip_layers = list(range(0, 14)) + list(range(26, 32))
+
+        # Exp24: quant layers 16-27, others FP16
+        # skip_layers = list(range(0, 16)) + list(range(28, 32))
+
+        # Exp25: quant layers 8-17, others FP16
+        # skip_layers = list(range(0, 8)) + list(range(18, 32))
+
+        # Exp26: quant layers 10-19, others FP16
+        # skip_layers = list(range(0, 10)) + list(range(20, 32))
+
+        # Exp27: quant layers 12-21, others FP16
+        # skip_layers = list(range(0, 12)) + list(range(22, 32))
+
+        # Exp28: quant layers 14-23, others FP16
+        # skip_layers = list(range(0, 14)) + list(range(24, 32))
+
+        # Exp29: quant layers 8-15, others FP16
+        #  skip_layers = list(range(0, 8)) + list(range(16, 32))
+
+        # Exp30: quant layers 10-17, others FP16
+        # skip_layers = list(range(0, 10)) + list(range(18, 32))
+
+        # Exp31: quant layers 12-19, others FP16
+        # skip_layers = list(range(0, 12)) + list(range(20, 32))
+
+        # Exp32: quant layers 14-21, others FP16
+        #skip_layers = list(range(0, 14)) + list(range(22, 32))
+
+        # Exp33: quant layers 16-23, others FP16
+        # skip_layers = list(range(0, 16)) + list(range(24, 32))
+
+        # Exp34: quant layers 8-13, others FP16
+        # skip_layers = list(range(0, 8)) + list(range(14, 32))
+
+        # Exp35: quant layers 10-15, others FP16
+        # skip_layers = list(range(0, 10)) + list(range(16, 32))
+
+        # Exp36: quant layers 12-17, others FP16
+        # skip_layers = list(range(0, 12)) + list(range(18, 32))
+
+        # Exp37: quant layers 14-19, others FP16
+        # skip_layers = list(range(0, 14)) + list(range(20, 32))
+
+        # Exp38: quant layers 16-21, others FP16
+        # skip_layers = list(range(0, 16)) + list(range(22, 32))
+
+        # Exp39: quant layers 18-23, others FP16
+        # skip_layers = list(range(0, 18)) + list(range(24, 32))
+
+        # Exp40: quant layers 8-11, others FP16
+        # skip_layers = list(range(0, 8)) + list(range(12, 32))
+
+        # Exp41: quant layers 10-13, others FP16
+        # skip_layers = list(range(0, 10)) + list(range(14, 32))
+
+        # Exp42: quant layers 12-15, others FP16
+        # skip_layers = list(range(0, 12)) + list(range(16, 32))
+
+        # Exp43: quant layers 14-17, others FP16
+        # skip_layers = list(range(0, 14)) + list(range(18, 32))
+
+        # Exp44: quant layers 16-19, others FP16
+        # skip_layers = list(range(0, 16)) + list(range(20, 32))
+
+        # Exp45: quant layers 18-21, others FP16
+        # skip_layers = list(range(0, 18)) + list(range(22, 32))
+
+        # Exp46: quant layers 20-23, others FP16
+        # skip_layers = list(range(0, 20)) + list(range(24, 32))
+
+        # Exp47: protect layers 14-17 as FP16, quantize all others
+        # skip_layers = list(range(14, 18))
+
+        # Exp48: protect layers 8-11 as FP16, quantize all others
+        # skip_layers = list(range(8, 12))
+
+        # Exp49: protect layers 10-13 as FP16, quantize all others
+        # skip_layers = list(range(10, 14))
+
+        # Exp50: protect layers 12-15 as FP16, quantize all others
+        # skip_layers = list(range(12, 16))
+
+        # Exp51: protect layers 16-19 as FP16, quantize all others
+        # skip_layers = list(range(16, 20))
+
+        # Exp52: protect layers 18-21 as FP16, quantize all others
+        # skip_layers = list(range(18, 22))
+
+        # Exp53: protect layers 20-23 as FP16, quantize all others
+        # skip_layers = list(range(20, 24))
 
         # === 硬编码结束 ===
+        # ============================================================
+        # ACTIVE DLM SANDWICH METHOD
+        # ============================================================
+        # Structural prior:
+        #
+        #   aggressive W2 edges
+        #       -> conservative contiguous W3 middle core
+        #       -> aggressive W2 edges
+        #
+        # The optional DLM sensitivity/outlier score may only refine
+        # the location of the contiguous middle interval within the
+        # configured center-shift bound. It cannot produce an arbitrary
+        # top-K set that destroys the sandwich structure.
+        #
+        # Final avg-2 preview:
+        #
+        #   W1 outer edges -> W2 transitions -> W3 middle core
+        #
+        # Current executable stage remains true W2/W3 GPTQ.
+        # ============================================================
+
+        from ..mixed_precision import (
+            build_sandwich_plan,
+            load_sandwich_config,
+            save_sandwich_plan,
+        )
+
+        sandwich_config_path = os.environ.get(
+            "QDLM_SANDWICH_CONFIG",
+            "configs/qdlm_sandwich_w23.json",
+        )
+
+        sandwich_config = load_sandwich_config(
+            sandwich_config_path
+        )
+
+        layer_parameter_counts = []
+
+        for candidate_layer in layers:
+            candidate_modules = find_layers(
+                candidate_layer
+            )
+
+            counted_names = set()
+            parameter_count = 0
+
+            for module_group in inside_layer_modules:
+                for module_name in module_group:
+                    if (
+                        module_name in candidate_modules
+                        and module_name not in counted_names
+                    ):
+                        counted_names.add(module_name)
+
+                        parameter_count += int(
+                            candidate_modules[
+                                module_name
+                            ].weight.numel()
+                        )
+
+            if parameter_count <= 0:
+                raise RuntimeError(
+                    "Could not count quantized parameters for "
+                    "a transformer block."
+                )
+
+            layer_parameter_counts.append(
+                parameter_count
+            )
+
+        sandwich_plan = build_sandwich_plan(
+            config=sandwich_config,
+            layer_weights=layer_parameter_counts,
+        )
+
+        if not set(
+            sandwich_plan.current_bits
+        ).issubset({2, 3}):
+            raise RuntimeError(
+                "Current executable sandwich stage must only "
+                "contain W2 and W3."
+            )
+
+        layer_bit_map = (
+            sandwich_plan.current_layer_bit_map
+        )
+
+        # All transformer blocks participate in the current method.
+        skip_layers = []
+        quant_layers = list(range(len(layers)))
+
+        self._sandwich_plan = sandwich_plan
+
+        plan_output_override = os.environ.get(
+            "QDLM_SANDWICH_PLAN_OUT",
+            "",
+        ).strip()
+
+        if plan_output_override:
+            sandwich_plan_output = (
+                plan_output_override
+            )
+        else:
+            sandwich_plan_output = (
+                sandwich_config.plan_output
+            )
+
+        self._sandwich_plan_output = str(
+            save_sandwich_plan(
+                plan=sandwich_plan,
+                output_file=sandwich_plan_output,
+            )
+        )
+
+        experiment_name = (
+            "dlm_sandwich_w23_"
+            f"avg{sandwich_plan.current_average_bits:.4f}"
+        )
+
+        logger.info("=" * 72)
+        logger.info(
+            f"Experiment: {experiment_name}"
+        )
+        logger.info(
+            "W2 edge/transition blocks "
+            f"({len(sandwich_plan.current_w2_layers)}): "
+            f"{list(sandwich_plan.current_w2_layers)}"
+        )
+        logger.info(
+            "W3 middle blocks "
+            f"({len(sandwich_plan.current_w3_layers)}): "
+            f"{list(sandwich_plan.current_w3_layers)}"
+        )
+        logger.info(
+            "Current parameter-weighted average bits: "
+            f"{sandwich_plan.current_average_bits:.6f}"
+        )
+        logger.info(
+            "Final avg-2 preview W1 blocks: "
+            f"{list(sandwich_plan.final_w1_layers)}"
+        )
+        logger.info(
+            "Final avg-2 preview W2 blocks: "
+            f"{list(sandwich_plan.final_w2_layers)}"
+        )
+        logger.info(
+            "Final avg-2 preview W3 blocks: "
+            f"{list(sandwich_plan.final_w3_layers)}"
+        )
+        logger.info(
+            "Final preview parameter-weighted average bits: "
+            f"{sandwich_plan.final_preview_average_bits:.6f}"
+        )
+        logger.info(
+            f"Plan saved to: {self._sandwich_plan_output}"
+        )
+        logger.info("=" * 72)
+
+        # ============================================================
+        # END ACTIVE DLM SANDWICH METHOD
+        # ============================================================
+        # ============================================================
+
+
 
         for i in range(len(layers)):
-            # 跳过指定层
+            layer_bits = layer_bit_map[i]
+
+            # Skip branch is retained for compatibility, although
+            # mixed W2/W3 currently sets skip_layers = [].
             if i in skip_layers:
                 logger.info(f"⚠️ SKIPPING layer {i + 1}/{len(layers)} - keeping FP16")
                 layer = layers[i]
@@ -354,7 +623,7 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
                 continue
 
 
-            logger.info(f"Start quantizing layer {i + 1}/{len(layers)}")
+            logger.info(f"Start quantizing layer {i + 1}/{len(layers)} at W{layer_bits}")
             layer = layers[i]
             force_layer_back_to_cpu = False
             if get_device(layer) == CPU:
@@ -369,7 +638,7 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
                 for name in subset:
                     gptq[name] = GPTQ(subset[name])
                     gptq[name].quantizer.configure(
-                        self.quantize_config.bits,
+                        layer_bits,
                         perchannel=True,
                         sym=self.quantize_config.sym,
                         mse=False,
@@ -408,6 +677,83 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
 
                 for name in subset:
                     logger.info(f"Quantizing {name} in layer {i + 1}/{len(layers)}...")
+
+
+                    # ====================================================
+                    # GPTQ calibration geometry probe.
+                    #
+                    # Save the RAW Hessian diagonal before fasterquant()
+                    # modifies / deletes self.H.
+                    # ====================================================
+                    if (
+                        os.environ.get(
+                            "GPTQ_DUMP_CALIB_H",
+                            "0",
+                        )
+                        == "1"
+                        and name == "attn_out"
+                        and i in {8, 12, 16, 20, 24}
+                    ):
+                        h_diag = (
+                            torch.diag(
+                                gptq[name].H
+                            )
+                            .detach()
+                            .float()
+                            .cpu()
+                        )
+
+                        h_diag_normalized = (
+                            h_diag
+                            /
+                            (
+                                h_diag.sum()
+                                + 1e-12
+                            )
+                        )
+
+                        dump_dir = (
+                            "step_logs/"
+                            "gptq_calibration"
+                        )
+
+                        os.makedirs(
+                            dump_dir,
+                            exist_ok=True,
+                        )
+
+                        dump_file = (
+                            f"{dump_dir}/"
+                            f"attn_out_layer{i}_"
+                            f"w{self.quantize_config.bits}.pt"
+                        )
+
+                        torch.save(
+                            {
+                                "layer": int(i),
+                                "module": name,
+                                "bits": int(
+                                    self.quantize_config.bits
+                                ),
+                                "nsamples": int(
+                                    gptq[name].nsamples
+                                ),
+                                "h_diag": h_diag,
+                                "h_diag_normalized": (
+                                    h_diag_normalized
+                                ),
+                            },
+                            dump_file,
+                        )
+
+                        print(
+                            "[GPTQ CALIB] saved:",
+                            dump_file,
+                            "dim=",
+                            h_diag.numel(),
+                        )
+                    # ====================================================
+
                     scale, zero, g_idx = gptq[name].fasterquant(
                         percdamp=self.quantize_config.damp_percent,
                         group_size=self.quantize_config.group_size,
@@ -461,6 +807,39 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
             force_layer_back_to_cpu=force_layer_back_to_cpu,
             use_marlin=self.quantize_config.checkpoint_format == CHECKPOINT_FORMAT.MARLIN,
         )
+
+        if hasattr(self, "_sandwich_plan"):
+            from ..mixed_precision import (
+                save_sandwich_plan,
+                validate_packed_model,
+            )
+
+            packed_summary = validate_packed_model(
+                model=self.model,
+                quantizers=quantizers,
+                plan=self._sandwich_plan,
+                layers_block_name=(
+                    self.layers_block_name
+                ),
+            )
+
+            self._sandwich_packed_summary = (
+                packed_summary
+            )
+
+            save_sandwich_plan(
+                plan=self._sandwich_plan,
+                output_file=(
+                    self._sandwich_plan_output
+                ),
+                packed_summary=packed_summary,
+            )
+
+            logger.info(
+                "[Sandwich] packed validation: "
+                f"{packed_summary}"
+            )
+
         if device_map:
             self.model = remove_hook_from_module(self.model, recurse=True)
             self.model = simple_dispatch_model(self.model, device_map)

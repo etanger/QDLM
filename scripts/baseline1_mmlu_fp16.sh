@@ -1,5 +1,5 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=3,2
 cd "$(dirname "$0")/.."
 MODEL_PATH='/workspace/hdd/datasets/zwang97/models/LLaDA-8B-Instruct'
 W_BIT=2

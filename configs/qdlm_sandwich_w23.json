@@ -1,0 +1,19 @@
+{
+  "method": "dlm_sandwich_gptq",
+  "stage": "w23",
+
+  "stage1_target_average_bits": 2.25,
+  "final_target_average_bits": 2.0,
+
+  "num_w3_layers": null,
+
+  "score_file": null,
+  "score_name": "dlm_outlier_density_sensitivity",
+  "score_weight": 0.35,
+  "higher_is_more_sensitive": true,
+
+  "max_center_shift": 2.0,
+  "min_edge_layers": 4,
+
+  "plan_output": "results/mixed_precision/dlm_sandwich_w23_plan.json"
+}
