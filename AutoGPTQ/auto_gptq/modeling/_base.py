@@ -433,7 +433,7 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         #
         #   W1 outer edges -> W2 transitions -> W3 middle core
         #
-        # Current executable stage remains true W2/W3 GPTQ.
+        # Stage w123 executes the exact avg2 allocation with binary W1 GPTQ.
         # ============================================================
 
         from ..mixed_precision import (
@@ -492,11 +492,17 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
 
         if not set(
             sandwich_plan.current_bits
-        ).issubset({2, 3}):
+        ).issubset({1, 2, 3}):
             raise RuntimeError(
                 "Current executable sandwich stage must only "
-                "contain W2 and W3."
+                "contain W1, W2, and W3."
             )
+
+        if 1 in sandwich_plan.current_bits:
+            if not self.quantize_config.sym:
+                raise ValueError("W1 sandwich requires sym=True.")
+            if use_triton or self.quantize_config.checkpoint_format == CHECKPOINT_FORMAT.MARLIN:
+                raise ValueError("W1 sandwich requires the reference binary backend.")
 
         layer_bit_map = (
             sandwich_plan.current_layer_bit_map
@@ -530,11 +536,12 @@ class BaseGPTQForCausalLM(nn.Module, PushToHubMixin):
         )
 
         experiment_name = (
-            "dlm_sandwich_w23_"
+            f"dlm_sandwich_{sandwich_plan.stage}_"
             f"avg{sandwich_plan.current_average_bits:.4f}"
         )
 
         logger.info("=" * 72)
+        logger.info(f"Current W1 layers: {list(sandwich_plan.current_w1_layers)}")
         logger.info(
             f"Experiment: {experiment_name}"
         )

@@ -10,6 +10,11 @@ logger = getLogger(__name__)
 def quantize(x, scale, zero, maxq):
     if maxq < 0:
         return (x > scale / 2).float() * scale + (x < zero / 2).float() * zero
+    if maxq == 1:
+        # Binary weights have two symmetric levels, -alpha and +alpha.
+        # The affine convention is scale=2*alpha, zero=0.5. Rounding
+        # before adding a fractional zero would introduce a third level.
+        return torch.where(x >= 0, scale / 2, -scale / 2)
     q = torch.clamp(torch.round(x / scale) + zero, 0, maxq)
     return scale * (q - zero)
 
@@ -32,6 +37,8 @@ class Quantizer(nn.Module):
         maxshrink=0.8,
         trits=False,
     ):
+        if bits == 1 and (not sym or trits):
+            raise ValueError("W1 requires symmetric binary quantization, not asymmetric or ternary mode.")
         self.maxq = torch.tensor(2**bits - 1)
         self.perchannel = perchannel
         self.sym = sym
@@ -74,7 +81,12 @@ class Quantizer(nn.Module):
         xmin[tmp] = -1
         xmax[tmp] = +1
 
-        if self.maxq < 0:
+        if self.maxq == 1:
+            # For fixed signs, mean(abs(w)) minimizes squared weight error.
+            # GPTQ still applies its Hessian-based sequential compensation.
+            self.scale = (2 * x.abs().mean(dim=1)).clamp_min(torch.finfo(x.dtype).eps)
+            self.zero = torch.full_like(self.scale, 0.5)
+        elif self.maxq < 0:
             self.scale = xmax
             self.zero = xmin
         else:
@@ -84,7 +96,7 @@ class Quantizer(nn.Module):
             else:
                 self.zero = torch.round(-xmin / self.scale)
 
-        if self.mse:
+        if self.mse and self.maxq != 1:
             best = torch.full([x.shape[0]], float("inf"), device=dev)
             for i in range(int(self.maxshrink * self.grid)):
                 p = 1 - i / self.grid

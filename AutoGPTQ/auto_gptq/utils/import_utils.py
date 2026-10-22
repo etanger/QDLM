@@ -67,6 +67,11 @@ def dynamically_import_QuantLinear(
     use_marlin: bool = False,
     use_tritonv2: bool = False,
 ):
+    if bits == 1:
+        if use_triton or use_tritonv2 or use_qigen or use_marlin:
+            raise ValueError("W1 uses the binary reference backend; disable other kernel backends.")
+        from ..nn_modules.qlinear.qlinear_binary import QuantLinear
+        return QuantLinear
     try:
         import habana_frameworks.torch.hpu  # noqa: F401
     except Exception as e:

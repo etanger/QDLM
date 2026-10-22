@@ -12,11 +12,9 @@ class SandwichConfig:
     """
     Configuration for DLM-specific sandwich mixed precision.
 
-    Current executable stage:
-        W2 edges + contiguous W3 middle core.
-
-    Final target preview:
-        W1 outer edges + W2 transitions + W3 middle core.
+    Executable stages:
+        w23: W2 edges + contiguous W3 middle core.
+        w123: W1 outer edges + optional W2 transitions + W3 core.
     """
 
     config_path: str
@@ -75,6 +73,10 @@ class SandwichPlan:
         }
 
     @property
+    def current_w1_layers(self) -> tuple[int, ...]:
+        return tuple(i for i, bits in enumerate(self.current_bits) if bits == 1)
+
+    @property
     def current_w2_layers(self) -> tuple[int, ...]:
         return tuple(
             idx
@@ -129,6 +131,8 @@ class SandwichPlan:
                 "current_stage": (
                     "W2 edges and transition layers; "
                     "contiguous W3 middle core"
+                    if self.stage == "w23" else
+                    "W1 outer edges; optional W2 transitions; contiguous W3 middle core"
                 ),
                 "final_target": (
                     "W1 outer edges; W2 transition layers; "
@@ -166,13 +170,15 @@ class SandwichPlan:
                 str(i): int(v)
                 for i, v in enumerate(self.layer_weights)
             },
-            "current_w23_stage": {
+            ("current_w23_stage" if self.stage == "w23" else "current_avg2_stage"): {
                 "target_average_bits": (
-                    self.stage1_target_average_bits
+                    self.stage1_target_average_bits if self.stage == "w23"
+                    else self.final_target_average_bits
                 ),
                 "actual_average_bits": (
                     self.current_average_bits
                 ),
+                "w1_layers": list(self.current_w1_layers),
                 "w2_layers": list(self.current_w2_layers),
                 "w3_layers": list(self.current_w3_layers),
                 "w3_interval": [
@@ -191,10 +197,12 @@ class SandwichPlan:
                 "actual_average_bits": (
                     self.final_preview_average_bits
                 ),
-                "implemented": False,
+                "implemented": True,
+                "executed": self.stage == "w123",
                 "note": (
-                    "W1 quantizer and accelerated W1 backend "
-                    "are not enabled in the current W2/W3 stage."
+                    "W1 uses binary GPTQ and packed sign storage with a reference "
+                    "dequantize-and-matmul backend. It is executed only in stage w123. "
+                    "Average bits describe selected weights, excluding metadata and unquantized modules."
                 ),
                 "w1_layers": list(self.final_w1_layers),
                 "w2_layers": list(self.final_w2_layers),
@@ -256,10 +264,9 @@ def load_sandwich_config(
         )
     )
 
-    if stage != "w23":
+    if stage not in {"w23", "w123"}:
         raise ValueError(
-            "The current executable implementation supports "
-            f"stage='w23'; got {stage!r}."
+            f"Supported sandwich stages are 'w23' and 'w123'; got {stage!r}."
         )
 
     stage1_target = float(
@@ -285,6 +292,9 @@ def load_sandwich_config(
         raise ValueError(
             "final_target_average_bits must be in [1, 3]."
         )
+
+    if stage == "w123" and final_target != 2.0:
+        raise ValueError("Executable w123 requires final_target_average_bits=2.0.")
 
     raw_num_w3 = payload.get(
         "num_w3_layers",
@@ -795,6 +805,16 @@ def build_sandwich_plan(
         final_preview_average_bits,
     ) = final_candidates[0]
 
+    if config.stage == "w123":
+        # Do not silently call a nearest-budget allocation exact avg2.
+        if sum(b * n for b, n in zip(final_preview_bits, weights)) != 2 * sum(weights):
+            raise ValueError(
+                "The selected middle interval cannot reach exact avg2 with whole-layer "
+                "edge allocation. Change num_w3_layers or the quantized module coverage."
+            )
+        current_bits = final_preview_bits
+        current_average_bits = final_preview_average_bits
+
     return SandwichPlan(
         method=config.method,
         stage=config.stage,
@@ -975,7 +995,32 @@ def validate_packed_model(
             f"actual={histogram}"
         )
 
+    packed_modules = [named_modules[n] for n in quantizers if n.startswith(prefix)]
+    parameter_count = sum(m.infeatures * m.outfeatures for m in packed_modules)
+    weighted_bits = sum(m.bits * m.infeatures * m.outfeatures for m in packed_modules)
+    if not packed_modules or parameter_count != sum(plan.layer_weights):
+        raise RuntimeError("Packed module coverage does not match the planned parameter count.")
+    expected_bits = sum(b * n for b, n in zip(plan.current_bits, plan.layer_weights))
+    if weighted_bits != expected_bits:
+        raise RuntimeError("Packed weight bit budget does not match the plan.")
+    packed_weight_bytes = sum(m.qweight.numel() * m.qweight.element_size() for m in packed_modules)
+    packed_module_bytes = sum(t.numel() * t.element_size()
+                              for m in packed_modules for t in m.state_dict().values())
+    state_bytes = sum(t.numel() * t.element_size() for t in model.state_dict().values())
+    # Packed linear biases are buffers but were parameters in the source model.
+    original_parameters = parameter_count + sum(p.numel() for p in model.parameters())
+    original_parameters += sum(m.bias.numel() for m in packed_modules if m.bias is not None)
+
     return {
+        "quantized_weight_parameters": parameter_count,
+        "quantized_weight_average_bits": weighted_bits / parameter_count,
+        "quantized_parameter_fraction": parameter_count / original_parameters,
+        "packed_weight_bytes_including_padding": packed_weight_bytes,
+        "quantization_metadata_and_bias_bytes": packed_module_bytes - packed_weight_bytes,
+        "unquantized_state_bytes": state_bytes - packed_module_bytes,
+        "state_dict_tensor_bytes": state_bytes,
+        "state_dict_bits_per_original_parameter": 8 * state_bytes / original_parameters,
+        "runtime_memory_note": "Forward dequantization temporaries are not included in stored tensor bytes.",
         "checked_modules": checked_modules,
         "expected_histogram": {
             str(key): value

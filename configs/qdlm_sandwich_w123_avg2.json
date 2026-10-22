@@ -1,0 +1,12 @@
+{
+  "method": "dlm_sandwich_gptq",
+  "stage": "w123",
+  "stage1_target_average_bits": 2.25,
+  "final_target_average_bits": 2.0,
+  "num_w3_layers": 8,
+  "score_file": null,
+  "score_weight": 0.0,
+  "max_center_shift": 0.0,
+  "min_edge_layers": 4,
+  "plan_output": "results/mixed_precision/dlm_sandwich_w123_avg2_plan.json"
+}

@@ -126,7 +126,7 @@ def _infer_layer_bits_from_quantizer_entry(
 
     inferred_bits = levels.bit_length() - 1
 
-    if inferred_bits not in (2, 3, 4, 8):
+    if inferred_bits not in (1, 2, 3, 4, 8):
         return default_bits
 
     return inferred_bits
@@ -179,6 +179,13 @@ def make_quant(
                     bits,
                 )
 
+            LayerQuantLinear = dynamically_import_QuantLinear(
+                use_triton=use_triton, desc_act=desc_act, group_size=group_size,
+                bits=layer_bits, use_marlin=use_marlin,
+                disable_exllama=disable_exllama, disable_exllamav2=disable_exllamav2,
+                use_qigen=use_qigen, use_tritonv2=use_tritonv2,
+            )
+
             ori_layer_device = next(submodule.parameters()).device
 
             if isinstance(submodule, nn.Linear):
@@ -197,7 +204,7 @@ def make_quant(
                 and not use_qigen
                 and not use_tritonv2
             ):
-                new_layer = QuantLinear(
+                new_layer = LayerQuantLinear(
                     layer_bits,
                     group_size,
                     in_features,
@@ -208,7 +215,7 @@ def make_quant(
                     weight_dtype=submodule.weight.dtype,
                 )
             else:
-                new_layer = QuantLinear(
+                new_layer = LayerQuantLinear(
                     layer_bits,
                     group_size,
                     in_features,
@@ -378,7 +385,9 @@ def pack_model(
         disable_exllamav2=True,
         use_marlin=use_marlin,
     )
-    qlayers = find_layers(model, [QuantLinear])
+    # Mixed-bit modules can use different backend classes, including W1.
+    qlayers = {n: m for n, m in model.named_modules()
+               if n in quantizers and hasattr(m, "qweight") and callable(getattr(m, "pack", None))}
 
     missing_quantized_modules = sorted(
         set(quantizers) - set(qlayers)
@@ -432,7 +441,7 @@ def pack_model(
                 zero.to(CPU),
                 g_idx.to(CPU),
             )
-            if QuantLinear.QUANT_TYPE == "marlin":
+            if qlayers[name].QUANT_TYPE == "marlin":
                 qlayers[name].pack(layers[name], scale)
             else:
                 qlayers[name].pack(layers[name], scale, zero, g_idx)
