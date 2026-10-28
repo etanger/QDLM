@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--config", default="configs/qdlm_sandwich_w23.json")
+    parser.add_argument("--quant-backend", choices=["legacy", "flute"], default="legacy")
     parser.add_argument("--skip-profile", action="store_true")
     args = parser.parse_args()
     if min(args.limit, args.repeats, args.warmup, args.latency_per_task) <= 0:
@@ -67,6 +68,8 @@ def parse_args():
 def main():
     args = parse_args()
     os.chdir(ROOT)
+    if os.environ.get("CUDA_VISIBLE_DEVICES") != "2,3":
+        raise RuntimeError("Only physical GPUs 2,3 are authorized; set CUDA_VISIBLE_DEVICES=2,3")
     out = Path(args.output).resolve()
     out.mkdir(parents=True, exist_ok=False)
     sys.path[:0] = [str(ROOT / "AutoGPTQ"), str(ROOT / "lm-evaluation-harness")]
@@ -85,6 +88,13 @@ def main():
         raise RuntimeError("Expose exactly two GPUs with CUDA_VISIBLE_DEVICES")
     if int(os.environ.get("WORLD_SIZE", "1")) != 1:
         raise RuntimeError("Launch with python, not torchrun or accelerate launch")
+    if args.quant_backend == "flute":
+        from qdlm_flute_backend import (
+            require_flute, preflight_flute, convert_model_to_flute, prepare_flute_model,
+        )
+        flute = require_flute()
+        print(f"FLUTE {flute.__version__}: W2/W3 templates available", flush=True)
+        flute_preflight = preflight_flute()
     for module, expected in [(auto_gptq, ROOT / "AutoGPTQ"),
                              (lm_eval, ROOT / "lm-evaluation-harness")]:
         if not Path(module.__file__).resolve().is_relative_to(expected):
@@ -165,7 +175,8 @@ def main():
                     "AutoGPTQ/autogptq_extension/cuda_256/autogptq_cuda_kernel_256.cu",
                     "AutoGPTQ/autogptq_extension/cuda_64/autogptq_cuda_kernel_64.cu",
                     "lm-evaluation-harness/lm_eval/models/llada.py",
-                    "tools/benchmark_sandwich.py", "tools/qdlm_benchmark_core.py"]
+                    "tools/benchmark_sandwich.py", "tools/qdlm_benchmark_core.py",
+                    "tools/qdlm_flute_backend.py", args.config]
     metadata = dict(args=vars(args), reviewed_source_revision=SOURCE_REVISION,
                     actual_revision=command_output(["git", "rev-parse", "HEAD"]),
                     source_sha256={p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest()
@@ -180,14 +191,18 @@ def main():
                     latency_request_count=len(latency_cases),
                     request_batch_size=1, baseline_dtype="float16",
                     quant_activation_dtype="float16", autocast=False,
+                    quant_backend=args.quant_backend,
                     temperature=0, cfg_scale=0, remasking="low_confidence",
                     quant_start_step=0, all_forward_calls_preserved=True,
                     initial_zero_transfer_steps=max(0, args.steps - args.gen_length),
                     inference_excludes=["model loading", "calibration", "packing",
-                                        "warmup", "profiling", "file writes"],
+                                        "warmup", "backend conversion and tuning", "profiling", "file writes"],
                     generation_timing="GPU-resident prompt to synchronized final tokens",
                     request_timing="tokenization, input copy, generation, output copy, stop processing, decode",
                     accuracy_computed=args.mode == "accuracy")
+    if args.quant_backend == "flute":
+        metadata["flute_preflight"] = flute_preflight
+        metadata["flute_version"] = flute.__version__
     write_json(out / "metadata.json", metadata)
     print(f"Standard requests: {len(cases)} | latency requests: {len(latency_cases)} | mode: {args.mode}", flush=True)
 
@@ -275,6 +290,7 @@ def main():
     parity_dir = out / "reference_check"
     parity_dir.mkdir()
     metadata["reference_parity"] = {}
+    legacy_quant_tokens = None
     for variant, device in {"fp16": "cuda:0", "sandwich_w23": "cuda:1"}.items():
         print(f"Checking original versus clean decoding: {variant}", flush=True)
         prompt = torch.tensor([latency_cases[0]["input_ids"]], device=device)
@@ -293,8 +309,33 @@ def main():
             write_json(parity_dir / f"{variant}_mismatch.json",
                        {"reference": reference.tolist(), "clean": clean.tolist()})
             raise RuntimeError(f"Decoder parity failed for {variant}; benchmark stopped")
+        if variant == "sandwich_w23":
+            legacy_quant_tokens = clean[0, prompt.shape[1]:].tolist()
         del reference, clean, prompt
     print("Reference decoder parity passed for both models.", flush=True)
+    if args.quant_backend == "flute":
+        started = time.perf_counter()
+        metadata["flute_conversion"] = convert_model_to_flute(qmodel)
+        quant_modules = [(n, m) for n, m in qmodel.named_modules() if hasattr(m, "qweight")]
+        metadata["execution_quant_modules"] = [dict(name=n, bits=m.bits, backend=type(m).__module__)
+                                                for n, m in quant_modules]
+        with torch.cuda.device(1), torch.no_grad(), torch.autocast("cuda", enabled=False):
+            prompt = torch.tensor([latency_cases[0]["input_ids"]], device="cuda:1")
+            prepare_flute_model(qmodel, prompt.shape[1] + args.gen_length)
+            converted = generate_clean(qmodel, prompt, **decode_kwargs)
+            converted_tokens = converted[0, prompt.shape[1]:].cpu().tolist()
+        metadata["backend_preparation_seconds"] = time.perf_counter() - started
+        metadata["backend_generation_comparison"] = dict(
+            case_id=latency_cases[0]["case_id"],
+            identical_tokens=converted_tokens == legacy_quant_tokens,
+            different_token_count=sum(a != b for a, b in zip(converted_tokens, legacy_quant_tokens)),
+            note="One full generation comparing legacy and FLUTE; not an accuracy evaluation.")
+        write_json(out / "backend_equivalence.json", dict(
+            **metadata["backend_generation_comparison"], legacy_tokens=legacy_quant_tokens,
+            flute_tokens=converted_tokens))
+        print(f"Backend generation comparison: {metadata['backend_generation_comparison']}", flush=True)
+        write_json(out / "metadata.json", metadata)
+        del prompt, converted
     rows = []
     answers = {name: {} for name in models}
     output_tokens = {name: {} for name in models}
@@ -303,6 +344,11 @@ def main():
     def measure(case, variant, device, phase, trial, assignment):
         model = models[variant]
         with torch.cuda.device(device), torch.no_grad(), torch.autocast("cuda", enabled=False):
+            if args.quant_backend == "flute" and variant == "sandwich_w23":
+                started = time.perf_counter()
+                prepare_flute_model(model, len(case["input_ids"]) + args.gen_length)
+                torch.cuda.synchronize(device)
+                metadata["backend_preparation_seconds"] += time.perf_counter() - started
             torch.cuda.synchronize(device)
             torch.cuda.reset_peak_memory_stats(device)
             request_start = time.perf_counter()
@@ -365,9 +411,15 @@ def main():
                         + list(models[variant].buffers())}
             if resident != {device}:
                 raise RuntimeError(f"Unexpected device placement for {variant}: {resident}")
-            for _ in range(args.warmup):
-                measure(latency_cases[0], variant, device, "warmup", -1, assignment)
+            if args.quant_backend == "legacy":
+                for _ in range(args.warmup):
+                    measure(latency_cases[0], variant, device, "warmup", -1, assignment)
         for index, case in enumerate(latency_cases):
+            if args.quant_backend == "flute":
+                # Exclude per-shape tuning/packing and warm both matched models.
+                for variant, device in placement.items():
+                    for _ in range(args.warmup):
+                        measure(case, variant, device, "warmup", -1, assignment)
             for trial in range(args.repeats):
                 order = list(models)
                 if (index + trial + (assignment == "B")) % 2:
@@ -385,10 +437,13 @@ def main():
                 for variant in order:
                     record(case, variant, placement[variant], "accuracy", 0, assignment)
 
-    summary = {"mode": args.mode, "latency": summarize_latency(rows),
+    summary = {"mode": args.mode, "quant_backend": args.quant_backend,
+               "quantized_weight_average_bits": metadata["quantized_weight_average_bits"],
+               "latency": summarize_latency(rows),
                "latency_prompts": len(latency_cases), "standard_prompts": len(cases),
                "output_mismatch_count": len(output_mismatches),
-               "output_mismatches": output_mismatches}
+               "output_mismatches": output_mismatches,
+               "repeatability_note": "Output mismatches compare repetitions/device placements within each variant, not quantized versus FP16 accuracy."}
     write_json(out / "summary.json", summary)
     if args.mode == "accuracy":
         for variant in models:
@@ -397,6 +452,11 @@ def main():
             summary[f"accuracy_{variant}"] = result["results"]
     else:
         summary["accuracy_note"] = "Latency subset only; no accuracy metric is computed."
+    if args.quant_backend == "flute":
+        summary["backend_generation_comparison"] = metadata["backend_generation_comparison"]
+        summary["backend_accuracy_note"] = (
+            "FLUTE can change floating-point accumulation and generated tokens. "
+            "Do not reuse legacy-backend accuracy as measured FLUTE accuracy; use mode=accuracy.")
     write_json(out / "summary.json", summary)
 
     if not args.skip_profile:
@@ -404,6 +464,8 @@ def main():
         case = sorted(latency_cases, key=lambda c: len(c["input_ids"]))[len(latency_cases) // 2]
         for variant, device in {"fp16": "cuda:1", "sandwich_w23": "cuda:0"}.items():
             with torch.cuda.device(device), torch.no_grad(), torch.autocast("cuda", enabled=False):
+                if args.quant_backend == "flute" and variant == "sandwich_w23":
+                    prepare_flute_model(qmodel, len(case["input_ids"]) + args.gen_length)
                 x = torch.full((1, len(case["input_ids"]) + args.gen_length),
                                args.mask_id, dtype=torch.long, device=device)
                 x[0, :len(case["input_ids"])]=torch.tensor(case["input_ids"], device=device)
@@ -420,6 +482,8 @@ def main():
                                       and module.autogptq_cuda_available is True
                                       and (threshold is False or m < threshold))
                             route = "packed_cuda" if packed else "unpack_then_dense_matmul"
+                        elif backend.endswith("qdlm_flute_backend"):
+                            route = "flute_qgemm_fused_lut_dequantization"
                         routes.append(dict(name=name, bits=module.bits, m=m,
                                            input_shape=list(tensor.shape), route=route,
                                            backend=backend, input_dtype=str(tensor.dtype)))
@@ -444,6 +508,8 @@ def main():
                         case_id=case["case_id"], records=routes,
                         route_counts=dict(Counter(r["route"] for r in routes))))
     metadata["nvidia_smi_after"] = command_output(["nvidia-smi"])
+    if args.quant_backend == "flute":
+        metadata["flute_templates"] = {n: m.prepared_shapes for n, m in quant_modules}
     write_json(out / "metadata.json", metadata)
     print(json.dumps(summary, indent=2, default=str), flush=True)
     print(f"Results saved to {out}", flush=True)
